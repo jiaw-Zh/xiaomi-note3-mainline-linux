@@ -1,0 +1,12 @@
+#!/sbin/openrc-run
+
+name="battery-guardian"
+description="Hardware Battery Guardian Daemon for Xiaomi Note 3"
+command="/usr/local/bin/battery-guardian.sh"
+command_background="yes"
+pidfile="/run/battery-guardian.pid"
+
+depend() {
+    need localmount
+    after bootmisc
+}

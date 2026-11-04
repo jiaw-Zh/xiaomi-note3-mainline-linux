@@ -1,0 +1,114 @@
+﻿diff --git a/drivers/net/wireless/ath/ath10k/core.c b/drivers/net/wireless/ath/ath10k/core.c
+index 20dc01a..48dccdd 100644
+--- a/drivers/net/wireless/ath/ath10k/core.c
++++ b/drivers/net/wireless/ath/ath10k/core.c
+@@ -2324,6 +2324,7 @@
+ 		ar->regs = &wcn3990_regs;
+ 		ar->hw_values = &wcn3990_values;
+ 		ar->qmi.is_qmi = true;
++		ar->fw_flags = &wcn3990_fw_flags;
+ 		break;
+ 	default:
+ 		ath10k_err(ar, "unsupported core hardware revision %d\n",
+diff --git a/drivers/net/wireless/ath/ath10k/core.h b/drivers/net/wireless/ath/ath10k/core.h
+index 0935f16..bba51b9 100644
+--- a/drivers/net/wireless/ath/ath10k/core.h
++++ b/drivers/net/wireless/ath/ath10k/core.h
+@@ -666,6 +666,10 @@
+ 	ATH10K_TX_PAUSE_MAX,
+ };
+ 
++struct fw_flag {
++	u32 flags;
++};
++
+ struct ath10k_fw_file {
+ 	const struct firmware *firmware;
+ 
+@@ -925,6 +929,7 @@
+ 	u32 (*bus_read32)(void *ar, u32 offset);
+ 	spinlock_t ce_lock; /* lock for CE access */
+ 	void *ce_states;
++	struct fw_flag *fw_flags;
+ 	/* must be last */
+ 	u8 drv_priv[0] __aligned(sizeof(void *));
+ };
+diff --git a/drivers/net/wireless/ath/ath10k/hw.c b/drivers/net/wireless/ath/ath10k/hw.c
+index 4332a27..c9c43cd 100644
+--- a/drivers/net/wireless/ath/ath10k/hw.c
++++ b/drivers/net/wireless/ath/ath10k/hw.c
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2014-2015 Qualcomm Atheros, Inc.
++ * Copyright (c) 2014-2015, 2017 Qualcomm Atheros, Inc.
+  *
+  * Permission to use, copy, modify, and/or distribute this software for any
+  * purpose with or without fee is hereby granted, provided that the above
+@@ -216,6 +216,10 @@
+ 	.ce_desc_meta_data_lsb		= 4,
+ };
+ 
++struct fw_flag wcn3990_fw_flags = {
++	.flags = 0x82E,
++};
++
+ void ath10k_hw_fill_survey_time(struct ath10k *ar, struct survey_info *survey,
+ 				u32 cc, u32 rcc, u32 cc_prev, u32 rcc_prev)
+ {
+diff --git a/drivers/net/wireless/ath/ath10k/hw.h b/drivers/net/wireless/ath/ath10k/hw.h
+index b7d9c23..6a8765b4 100644
+--- a/drivers/net/wireless/ath/ath10k/hw.h
++++ b/drivers/net/wireless/ath/ath10k/hw.h
+@@ -1,6 +1,6 @@
+ /*
+  * Copyright (c) 2005-2011 Atheros Communications Inc.
+- * Copyright (c) 2011-2013 Qualcomm Atheros, Inc.
++ * Copyright (c) 2011-2013,2017 Qualcomm Atheros, Inc.
+  *
+  * Permission to use, copy, modify, and/or distribute this software for any
+  * purpose with or without fee is hereby granted, provided that the above
+@@ -265,6 +265,8 @@
+ extern const struct ath10k_hw_regs qca4019_regs;
+ extern const struct ath10k_hw_regs wcn3990_regs;
+ 
++extern struct fw_flag wcn3990_fw_flags;
++
+ struct ath10k_hw_values {
+ 	u32 rtc_state_val_on;
+ 	u8 ce_count;
+diff --git a/drivers/net/wireless/ath/ath10k/wmi-tlv.c b/drivers/net/wireless/ath/ath10k/wmi-tlv.c
+index 7a8f9cf..6ccad6b 100644
+--- a/drivers/net/wireless/ath/ath10k/wmi-tlv.c
++++ b/drivers/net/wireless/ath/ath10k/wmi-tlv.c
+@@ -1,6 +1,6 @@
+ /*
+  * Copyright (c) 2005-2011 Atheros Communications Inc.
+- * Copyright (c) 2011-2014 Qualcomm Atheros, Inc.
++ * Copyright (c) 2011-2014, 2017 Qualcomm Atheros, Inc.
+  *
+  * Permission to use, copy, modify, and/or distribute this software for any
+  * purpose with or without fee is hereby granted, provided that the above
+@@ -1512,10 +1512,11 @@
+ 	cmd->ie_len = __cpu_to_le32(arg->ie_len);
+ 	cmd->num_probes = __cpu_to_le32(3);
+ 
+-	/* FIXME: There are some scan flag inconsistencies across firmwares,
+-	 * e.g. WMI-TLV inverts the logic behind the following flag.
+-	 */
+-	cmd->common.scan_ctrl_flags ^= __cpu_to_le32(WMI_SCAN_FILTER_PROBE_REQ);
++	if (QCA_REV_WCN3990(ar))
++		cmd->common.scan_ctrl_flags = ar->fw_flags->flags;
++	else
++		cmd->common.scan_ctrl_flags ^=
++			__cpu_to_le32(WMI_SCAN_FILTER_PROBE_REQ);
+ 
+ 	ptr += sizeof(*tlv);
+ 	ptr += sizeof(*cmd);
+@@ -3646,6 +3647,7 @@
+ 	ar->wmi.vdev_param = &wmi_tlv_vdev_param_map;
+ 	ar->wmi.pdev_param = &wmi_tlv_pdev_param_map;
+ 	ar->wmi.ops = &wmi_hl_1_0_ops;
++	ar->wmi.peer_flags = &wmi_tlv_peer_flags_map;
+ }
+ 
+ /* TLV init */

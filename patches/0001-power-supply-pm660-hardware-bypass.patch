@@ -1,0 +1,75 @@
+--- drivers/power/supply/qcom_smbx.c.bak	2026-11-04 19:24:37.923992800 +0800
++++ drivers/power/supply/qcom_smbx.c	2026-11-04 19:25:50.623977298 +0800
+@@ -689,6 +689,52 @@
+ 	}
+ }
+ 
++
++static ssize_t charging_enabled_show(struct device *dev,
++				     struct device_attribute *attr, char *buf)
++{
++	struct power_supply *psy = dev_get_drvdata(dev);
++	struct smb_chip *chip = power_supply_get_drvdata(psy);
++	unsigned int val = 0;
++	int ret;
++
++	ret = regmap_read(chip->regmap, chip->base + CHARGING_ENABLE_CMD, &val);
++	if (ret)
++		return ret;
++
++	return sysfs_emit(buf, "%d\n", !!(val & CHARGING_ENABLE_CMD_BIT));
++}
++
++static ssize_t charging_enabled_store(struct device *dev,
++				      struct device_attribute *attr,
++				      const char *buf, size_t count)
++{
++	struct power_supply *psy = dev_get_drvdata(dev);
++	struct smb_chip *chip = power_supply_get_drvdata(psy);
++	bool enable;
++	int ret;
++
++	ret = kstrtobool(buf, &enable);
++	if (ret)
++		return ret;
++
++	ret = regmap_update_bits(chip->regmap, chip->base + CHARGING_ENABLE_CMD,
++				 CHARGING_ENABLE_CMD_BIT,
++				 enable ? CHARGING_ENABLE_CMD_BIT : 0);
++	if (ret)
++		return ret;
++
++	power_supply_changed(psy);
++	return count;
++}
++static DEVICE_ATTR_RW(charging_enabled);
++
++static struct attribute *smb_charger_attrs[] = {
++	&dev_attr_charging_enabled.attr,
++	NULL,
++};
++ATTRIBUTE_GROUPS(smb_charger);
++
+ static int smb_set_property(struct power_supply *psy,
+ 			     enum power_supply_property psp,
+ 			     const union power_supply_propval *val)
+@@ -697,8 +743,9 @@
+ 
+ 	switch (psp) {
+ 	case POWER_SUPPLY_PROP_STATUS:
+-		return regmap_update_bits(chip->regmap, chip->base + USBIN_CMD_IL,
+-					  USBIN_SUSPEND_BIT, !val->intval);
++		return regmap_update_bits(chip->regmap, chip->base + CHARGING_ENABLE_CMD,
++					  CHARGING_ENABLE_CMD_BIT,
++					  val->intval ? CHARGING_ENABLE_CMD_BIT : 0);
+ 	case POWER_SUPPLY_PROP_CURRENT_MAX:
+ 		return smb_set_current_limit(chip, val->intval);
+ 	default:
+@@ -964,6 +1011,7 @@
+ 
+ 	supply_config.drv_data = chip;
+ 	supply_config.fwnode = dev_fwnode(&pdev->dev);
++	supply_config.attr_grp = smb_charger_groups;
+ 
+ 	desc = devm_kzalloc(chip->dev, sizeof(smb_psy_desc), GFP_KERNEL);
+ 	if (!desc)

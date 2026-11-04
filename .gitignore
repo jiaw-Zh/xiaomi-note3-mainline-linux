@@ -1,0 +1,37 @@
+# Sensitive data and private partitions (STRICTLY PROHIBITED)
+private/
+*.mac
+*.bdf
+*.mbn
+*.elf
+*.bin
+*.img
+*.ext4
+*.tar.gz
+*.cpio.gz
+*.log
+*.key
+*.pem
+*.pub
+id_*
+known_hosts
+
+# Build artifacts & temp files
+*.o
+*.ko
+*.mod.c
+*.order
+*.symvers
+*.tmp
+__pycache__/
+*.py[cod]
+.venv/
+build/
+dist/
+
+# OS specific files
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*~
