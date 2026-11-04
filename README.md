@@ -3,7 +3,7 @@
 
 [![Kernel](https://img.shields.io/badge/Linux-7.0.14-blue.svg)](https://kernel.org)
 [![Platform](https://img.shields.io/badge/SoC-Qualcomm%20SDM660-orange.svg)]()
-[![Distribution](https://img.shields.io/badge/RootFS-Alpine%20%2B%20Phosh-green.svg)]()
+[![Distribution](https://img.shields.io/badge/RootFS-Debian%2012%20%2B%20Phosh-green.svg)]()
 [![License](https://img.shields.io/badge/License-GPL%20v2-lightgrey.svg)](LICENSE)
 
 本项目旨在将**小米 Note 3（代号：`jason`，高通骁龙 SDM660，6GB+64GB）**成功移植至现代化主线 Linux（Linux 7.0.14），并针对 **7×24 小时低功耗微型服务器** 工况进行深度电源防护与系统调优。
@@ -21,8 +21,13 @@
    - 保持电池作为**断电 UPS 随时并联在线**，拔掉外部电线毫秒级无缝接管，绝不关机猝死；
    - 部署守护进程自动锁定在 45%~55%（约 3.85V）锂电黄金保存电压，支持 45℃ 紧急断充温控。
 3. **针对移动服务器的待机与物理按键调优**
-   - 改写系统底层按键事件，短按电源键实现物理一键息屏与唤醒，彻底根除 Alpine 默认按电源键直接 `poweroff` 关机的陷阱；
+   - 改写系统底层按键事件，短按电源键实现物理一键息屏与唤醒；
    - 息屏后发热 LED 阵列电流彻底清零，CPU 处于微秒级节能待机，**SSH 与局域网服务 7×24 小时毫秒级在线秒响应**。
+4. **原生 Debian 12 (bookworm) + Phosh 0.24 移动触控桌面闭环**
+   - 采用 Wayland 合成器 `phoc`，1080×1920 原生竖屏 KMS 输出与 2x 缩放；
+   - 完整打通 Freedreno Adreno 512 GPU 硬件加速与 Squeekboard 虚拟软键盘；
+   - 预装 `gnome-console` 移动触控终端，彻底去除开机锁屏与密码校验，冷启动 20 秒直入桌面；
+   - 彻底修复 Qualcomm SDM660 基带 Modem 读扇区死锁与 Hexagon DSP TQFTP 固件分发异常。
 
 ---
 
