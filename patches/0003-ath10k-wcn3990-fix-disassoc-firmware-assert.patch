@@ -1,0 +1,150 @@
+From: Antigravity <antigravity@local>
+Subject: [PATCH] wifi: ath10k: defer vdev_down on disassoc until station peer is deleted for WCN3990
+
+On WCN3990 (SNOC/integrated Wi-Fi on SDM660), the Hexagon DSP/WLAN firmware
+firmware enforces strict lifecycle ordering on virtual devices: a vdev must
+not be brought down via WMI_VDEV_DOWN_CMD while any peer association is still
+registered on that vdev. If WMI_VDEV_DOWN_CMD is issued before peer deletion,
+the firmware triggers a fatal assert:
+`err_qdi.c:459:EF:wlan_process:1:cmnos_thread.c:3285:Asserted in wlan_vdev.c:_w`
+which crashes the Hexagon MSS modem subsystem and initiates Subsystem Restart (SSR).
+
+In Linux mac80211, disconnecting or roaming triggers ath10k_bss_disassoc via
+BSS_CHANGED_ASSOC (assoc=0) BEFORE mac80211 calls drv_sta_state(STA_NOTEXIST)
+in __sta_info_destroy_part2. Consequently, the AP peer is still present when
+ath10k_bss_disassoc sends ath10k_wmi_vdev_down.
+
+Fix this by:
+1. Adding a `needs_vdev_down` boolean flag to `struct ath10k_vif`.
+2. In `ath10k_bss_disassoc`, if vif is STATION mode, mark `needs_vdev_down = true`
+   and skip immediate `ath10k_wmi_vdev_down`.
+3. In `ath10k_sta_state` under `IEEE80211_STA_NOTEXIST`, execute `ath10k_peer_delete`
+   first to clear the AP peer from firmware, and then immediately execute the
+   deferred `ath10k_wmi_vdev_down`.
+4. Ensure `ath10k_vdev_stop` and `ath10k_mac_op_unassign_vif_chanctx` also clean up
+   any pending `needs_vdev_down`.
+5. Clear `needs_vdev_down` on subsequent `ath10k_bss_assoc`.
+
+Tested on Xiaomi Mi Note 3 (jason) with Debian 12 / Phosh. Wi-Fi networks can now
+be switched repeatedly between 2.4GHz and 5GHz and scanned seamlessly without any
+Hexagon modem crashes.
+
+Signed-off-by: Antigravity <antigravity@local>
+---
+--- a/drivers/net/wireless/ath/ath10k/core.h
++++ b/drivers/net/wireless/ath/ath10k/core.h
+@@ -592,6 +592,7 @@ struct ath10k_vif {
+ 
+ 	bool is_started;
+ 	bool is_up;
++	bool needs_vdev_down;
+ 	bool spectral_enabled;
+ 	bool ps;
+ 	u32 aid;
+--- a/drivers/net/wireless/ath/ath10k/mac.c
++++ b/drivers/net/wireless/ath/ath10k/mac.c
+@@ -1479,6 +1479,14 @@ static int ath10k_vdev_stop(struct ath10
+ 
+ 	lockdep_assert_held(&ar->conf_mutex);
+ 
++	if (arvif->needs_vdev_down) {
++		ret = ath10k_wmi_vdev_down(ar, arvif->vdev_id);
++		if (ret)
++			ath10k_warn(ar, "failed to down vdev %i before stop: %d\n",
++				    arvif->vdev_id, ret);
++		arvif->needs_vdev_down = false;
++	}
++
+ 	reinit_completion(&ar->vdev_setup_done);
+ 	reinit_completion(&ar->vdev_delete_done);
+ 
+@@ -3169,6 +3177,7 @@ static void ath10k_bss_assoc(struct ieee
+ 	}
+ 
+ 	arvif->is_up = true;
++	arvif->needs_vdev_down = false;
+ 
+ 	ath10k_mac_set_sar_power(ar);
+ 
+@@ -3190,31 +3199,33 @@ static void ath10k_bss_disassoc(struct i
+ {
+ 	struct ath10k *ar = hw->priv;
+ 	struct ath10k_vif *arvif = (void *)vif->drv_priv;
+-	struct ieee80211_sta_vht_cap vht_cap = {};
+ 	int ret;
+ 
+ 	lockdep_assert_held(&ar->conf_mutex);
+ 
+-	ath10k_dbg(ar, ATH10K_DBG_MAC, "mac vdev %i disassoc bssid %pM\n",
+-		   arvif->vdev_id, arvif->bssid);
++	if (!arvif->is_up)
++		return;
+ 
+-	ret = ath10k_wmi_vdev_down(ar, arvif->vdev_id);
+-	if (ret)
+-		ath10k_warn(ar, "failed to down vdev %i: %d\n",
+-			    arvif->vdev_id, ret);
++	arvif->is_up = false;
+ 
+-	arvif->def_wep_key_idx = -1;
++	ath10k_dbg(ar, ATH10K_DBG_MAC, "mac vdev %i disassoc bssid %pM\n",
++		   arvif->vdev_id, arvif->bssid);
+ 
+-	ret = ath10k_mac_vif_recalc_txbf(ar, vif, vht_cap);
+-	if (ret) {
+-		ath10k_warn(ar, "failed to recalc txbf for vdev %i: %d\n",
+-			    arvif->vdev_id, ret);
+-		return;
++	if (vif->type == NL80211_IFTYPE_STATION) {
++		/* Defer vdev_down until sta peer is deleted in ath10k_sta_state.
++		 * WCN3990 firmware asserts in wlan_vdev.c:_wlan_vdev_down
++		 * if vdev_down is issued while peers still exist.
++		 */
++		arvif->needs_vdev_down = true;
++	} else {
++		ret = ath10k_wmi_vdev_down(ar, arvif->vdev_id);
++		if (ret)
++			ath10k_warn(ar, "failed to down vdev %i: %d\n",
++				    arvif->vdev_id, ret);
++		ath10k_mac_txpower_recalc(ar);
+ 	}
+ 
+-	arvif->is_up = false;
+-
+-	ath10k_mac_txpower_recalc(ar);
++	arvif->def_wep_key_idx = -1;
+ 
+ 	cancel_delayed_work_sync(&arvif->connection_loss_work);
+ }
+@@ -7650,6 +7661,18 @@ static int ath10k_sta_state(struct ieee8
+ 			ath10k_warn(ar, "failed to delete peer %pM for vdev %d: %i\n",
+ 				    sta->addr, arvif->vdev_id, ret);
+ 
++		if (vif->type == NL80211_IFTYPE_STATION && arvif->needs_vdev_down) {
++			ath10k_dbg(ar, ATH10K_DBG_MAC,
++				   "mac vdev %i executing deferred vdev_down after peer delete\n",
++				   arvif->vdev_id);
++			ret = ath10k_wmi_vdev_down(ar, arvif->vdev_id);
++			if (ret)
++				ath10k_warn(ar, "failed to down vdev %i: %d\n",
++					    arvif->vdev_id, ret);
++			arvif->needs_vdev_down = false;
++			ath10k_mac_txpower_recalc(ar);
++		}
++
+ 		ath10k_mac_dec_num_stations(arvif, sta);
+ 
+ 		spin_lock_bh(&ar->data_lock);
+@@ -9087,6 +9110,12 @@ ath10k_mac_op_unassign_vif_chanctx(struc
+ 				    arvif->vdev_id, ret);
+ 
+ 		arvif->is_up = false;
++	} else if (arvif->needs_vdev_down) {
++		ret = ath10k_wmi_vdev_down(ar, arvif->vdev_id);
++		if (ret)
++			ath10k_warn(ar, "failed to down vdev %i: %d\n",
++				    arvif->vdev_id, ret);
++		arvif->needs_vdev_down = false;
+ 	}
+ 
+ 	ret = ath10k_vdev_stop(arvif);
