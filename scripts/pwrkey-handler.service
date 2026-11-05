@@ -1,0 +1,14 @@
+[Unit]
+Description=Power Key and Backlight DPMS Linkage Daemon
+After=multi-user.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/pwrkey-handler
+Restart=always
+RestartSec=2
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

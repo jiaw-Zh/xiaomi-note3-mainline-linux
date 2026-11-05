@@ -1,18 +1,18 @@
 # Xiaomi Mi Note 3 (jason) Mainline Linux Project
-# 小米 Note 3（SDM660）主线 Linux 移植与服务器级电源保护工程
+# 小米 Note 3（SDM660）主线 Linux 移植
 
 [![Kernel](https://img.shields.io/badge/Linux-7.0.14-blue.svg)](https://kernel.org)
 [![Platform](https://img.shields.io/badge/SoC-Qualcomm%20SDM660-orange.svg)]()
 [![Distribution](https://img.shields.io/badge/RootFS-Debian%2012%20%2B%20Phosh-green.svg)]()
 [![License](https://img.shields.io/badge/License-GPL%20v2-lightgrey.svg)](LICENSE)
 
-本项目旨在将**小米 Note 3（代号：`jason`，高通骁龙 SDM660，6GB+64GB）**成功移植至现代化主线 Linux（Linux 7.0.14），并针对 **7×24 小时低功耗微型服务器** 工况进行深度电源防护与系统调优。
+本项目旨在将**小米 Note 3（代号：`jason`，高通骁龙 SDM660，6GB+64GB）**成功移植至现代化主线 Linux（Linux 7.0.14）
 
 ---
 
 ## 🌟 核心突破与技术亮点
 
-1. **全国首发：攻破 SDM660 + WCN3990 WiFi/蓝牙 主线死锁历史顽疾**
+1. **首发：攻破 SDM660 + WCN3990 WiFi/蓝牙 主线死锁历史顽疾**
    - 彻底解决了高通主线上多年来 `ath10k_snoc` 驱动由于 0x82e 固件段冲突导致 modem 崩溃死锁重启的问题；
    - 实现了双出厂物理 MAC 自动固化与蓝牙/Wi-Fi 全功能稳定联网。
 2. **硬件级旁路直供（Hardware Bypass Mode）与四层防爆护盾**
@@ -58,8 +58,10 @@
 │   └── 0002-ath10k-wcn3990-fix-0x82e-crash.patch    # 根治 WCN3990 0x82e 固件死锁补丁
 ├── scripts/
 │   ├── battery-guardian.sh                    # 45%~55% 黄金电量保护守护进程
-│   ├── battery-guardian.initd                 # OpenRC 系统开机自启服务
-│   ├── acpi-pwrkey.sh                         # 电源键物理一键息屏/唤醒脚本
+│   ├── pwrkey-handler.c                       # 物理电源键/音量键内核级独占拦截与背光秒开闭守护源码
+│   ├── pwrkey-handler.service                 # pwrkey-handler systemd 开机自启服务
+│   ├── gnome-no-blank.desktop                 # GNOME Session 抑制器（彻底根除超时锁屏与DPMS竞态）
+│   ├── pam-phosh                              # Phosh 免密登录 PAM 规则
 │   ├── 30-mkbootimg.py                        # ABL 引导镜像打包工具
 │   ├── repack-boot.py                         # 通用一键打包 boot.img 脚本
 │   └── setup-mac-from-persist.sh              # 自动提取出厂真实物理 MAC 注入脚本

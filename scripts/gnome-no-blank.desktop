@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Disable Screen Blanking and Lock
+Exec=/usr/bin/gnome-session-inhibit --app-id org.jason.pwr --reason "Disable screen locking and blanking" --inhibit suspend:idle --inhibit-only
+OnlyShowIn=GNOME;Phosh;
+NoDisplay=true
+X-GNOME-Autostart-Phase=Application
+X-GNOME-Autostart-Notify=false
+X-GNOME-AutoRestart=true
