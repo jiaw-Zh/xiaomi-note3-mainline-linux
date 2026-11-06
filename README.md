@@ -6,7 +6,7 @@
 [![Distribution](https://img.shields.io/badge/RootFS-Debian%2012%20%2B%20Phosh-green.svg)]()
 [![License](https://img.shields.io/badge/License-GPL%20v2-lightgrey.svg)](LICENSE)
 
-本项目旨在将**小米 Note 3（代号：`jason`，高通骁龙 SDM660，6GB+64GB）**成功移植至现代化主线 Linux（Linux 7.0.14），并提供对高通骁龙 660 / 636 / 630 同架构机型（红米 Note 5、小米 6X、小米 Max 3 等）具有深度参考价值的通用内核补丁与排坑实践。
+本项目旨在将 **小米 Note 3（代号：`jason`，高通骁龙 SDM660，6GB+64GB）** 成功移植至现代化主线 Linux（Linux 7.0.14），并提供对高通骁龙 660 / 636 / 630 同架构机型（红米 Note 5、小米 6X、小米 Max 3 等）具有深度参考价值的通用内核补丁与排坑实践。
 
 ---
 
