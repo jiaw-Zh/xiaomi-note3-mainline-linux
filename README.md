@@ -130,6 +130,9 @@ fastboot reboot
 ### Q3: 手机电池已经好几年了，长期插着电做 Linux 服务器会不会鼓包？
 * **A**: 会！锂电池长期在 4.35V~4.40V 满电高温浮充极易鼓包甚至起火。请参考本项目的 `0001` 补丁在内核中开启 PM660 芯片的 `0x42` 硬件断充寄存器，并配合 `battery-guardian.sh` 将电量常年锁定在 45%~55%（约 3.85V 黄金保存电压），实现纯外部供电与零浮充电流。详见：[电源保护与服务器待机设计规范.md](docs/电源保护与服务器待机设计规范.md)。
 
+### Q4: 为什么每次重启后 WiFi MAC 地址都会变化（漂移），导致路由器每次分发不同的动态 IP？
+* **A**: 高通移动端平台（如 SDM660/MSM8998）原厂物理 MAC 存储在 `persist` 分区的二进制文件 `/mnt/persist/wlan_bt/wlan.mac`（6 字节原始数据）。主线 Linux 的 `ath10k_snoc` 驱动由于未适配高通私有 NV 流程，驱动加载时读取 DTB 缺省必定打印 `invalid MAC address; choosing random` 并随机生成临时 MAC。若仅依赖简单的开机脚本去改 MAC，必然会因时序差（开机脚本在第 4 秒执行完毕退出，而 Hexagon DSP / ath10k 驱动在第 20 秒后才完全拉起并生成 `wlan0`）而静默失效。本项目提供了 `scripts/setup-mac-from-persist.sh`，采用 **systemd.link + NetworkManager 约束 + qualcomm-init 异步看门狗三层铁壁机制**，开机动态解析 `persist` 原厂二进制物理 MAC 并毫秒级自愈锁定，彻底根治 MAC 漂移并实现路由器固定 IP 永久绑定。
+
 ---
 
 ## 🔒 开源合规与设备安全免责声明
