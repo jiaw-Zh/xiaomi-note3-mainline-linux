@@ -1,0 +1,13 @@
+[Unit]
+Description=Xiaomi Note 3 WiFi Health Guardian & Deadlock Auto-Healer
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/wifi-guardian.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
