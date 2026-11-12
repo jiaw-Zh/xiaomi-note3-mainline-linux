@@ -17,14 +17,47 @@
 #define BRIGHTNESS_FILE "/sys/class/backlight/backlight/brightness"
 #define DPMS_FILE "/sys/class/drm/card0-DSI-1/dpms"
 
+// SDM660 Topology:
+// cpu0, cpu5, cpu6, cpu7 = Kryo 260 Silver (Little, A53, capacity 640)
+// cpu1, cpu2, cpu3, cpu4 = Kryo 260 Gold (Big, A73, capacity 1024)
+static const int big_cores[] = {1, 2, 3, 4};
+static const int nr_big_cores = 4;
+
 static volatile int running = 1;
 static int pwr_fd = -1;
 static int voldown_fd = -1;
 static int last_brightness = 2400; // ~60% default
+static int big_cores_current_state = -1; // -1: unknown, 0: offline, 1: online
 
 static void sig_handler(int sig) {
     (void)sig;
     running = 0;
+}
+
+static void set_big_cores_online(int online) {
+    if (big_cores_current_state == online) {
+        return;
+    }
+    char path[64];
+    for (int i = 0; i < nr_big_cores; i++) {
+        snprintf(path, sizeof(path), "/sys/devices/system/cpu/cpu%d/online", big_cores[i]);
+        int fd = open(path, O_WRONLY);
+        if (fd >= 0) {
+            write(fd, online ? "1\n" : "0\n", 2);
+            close(fd);
+        }
+    }
+    big_cores_current_state = online;
+    fprintf(stderr, "[pwrkey] Big cores (cpu1..4) set to %s\n", online ? "ONLINE (8 cores total)" : "OFFLINE (4 little cores active)");
+}
+
+static float get_load1(void) {
+    FILE *f = fopen("/proc/loadavg", "r");
+    if (!f) return 0.0f;
+    float l1 = 0.0f;
+    if (fscanf(f, "%f", &l1) != 1) l1 = 0.0f;
+    fclose(f);
+    return l1;
 }
 
 static int get_brightness(void) {
@@ -93,28 +126,34 @@ static void screen_off(void) {
     // 3. Hardware cutoff: force bl_power = 4 (FB_BLANK_POWERDOWN)
     set_bl_power(4);
 
-    fprintf(stderr, "[pwrkey] Screen turned OFF (DPMS=3, bl_power=4, WLED=00)\n");
+    // 4. PSCI Hotplug: immediately power down the 4 big Kryo Gold cores
+    set_big_cores_online(0);
+
+    fprintf(stderr, "[pwrkey] Screen turned OFF (DPMS=3, bl_power=4, big cores offlined)\n");
 }
 
 static void screen_on(void) {
-    // 1. Instruct Mutter / Phoc compositor to enter DPMS On (Mode 0)
+    // 1. Immediately power on the 4 big Kryo Gold cores for UI responsiveness
+    set_big_cores_online(1);
+
+    // 2. Instruct Mutter / Phoc compositor to enter DPMS On (Mode 0)
     system("su - jason -c 'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus busctl --user set-property org.gnome.Mutter.DisplayConfig /org/gnome/Mutter/DisplayConfig org.gnome.Mutter.DisplayConfig PowerSaveMode i 0' >/dev/null 2>&1");
 
-    // 2. Hardware enable: bl_power = 0 (FB_BLANK_UNBLANK)
+    // 3. Hardware enable: bl_power = 0 (FB_BLANK_UNBLANK)
     set_bl_power(0);
 
-    // 3. Restore preserved brightness
+    // 4. Restore preserved brightness
     if (last_brightness < 200) last_brightness = 2400;
     set_brightness(last_brightness);
 
-    // 4. Ensure desktop / user session is unlocked
+    // 5. Ensure desktop / user session is unlocked
     system("loginctl unlock-sessions >/dev/null 2>&1");
 
-    fprintf(stderr, "[pwrkey] Screen turned ON (DPMS=0, bl_power=0, brightness=%d)\n", last_brightness);
+    fprintf(stderr, "[pwrkey] Screen turned ON (DPMS=0, bl_power=0, brightness=%d, 8 cores active)\n", last_brightness);
 }
 
 int main(void) {
-    fprintf(stderr, "[pwrkey] Starting Power & Volume-Down Toggle Daemon for Xiaomi Note 3...\n");
+    fprintf(stderr, "[pwrkey] Starting Power, Volume-Down & CPU Hotplug Daemon for Xiaomi Note 3...\n");
 
     signal(SIGINT, sig_handler);
     signal(SIGTERM, sig_handler);
@@ -124,7 +163,6 @@ int main(void) {
     if (voldown_fd < 0) {
         perror("[pwrkey] Failed to open " VOLDOWN_DEV);
     } else {
-        // Exclusively grab Volume Down so system doesn't lower audio volume
         if (ioctl(voldown_fd, EVIOCGRAB, 1) < 0) {
             perror("[pwrkey] Warning: Failed to grab " VOLDOWN_DEV " exclusively");
         } else {
@@ -132,7 +170,7 @@ int main(void) {
         }
     }
 
-    // 2. Open Power Key - Secondary fallback (if ever fixed or pressed)
+    // 2. Open Power Key - Secondary fallback
     pwr_fd = open(POWER_DEV, O_RDONLY | O_NONBLOCK);
     if (pwr_fd >= 0) {
         if (ioctl(pwr_fd, EVIOCGRAB, 1) < 0) {
@@ -162,17 +200,48 @@ int main(void) {
     }
 
     long last_press_ms = 0;
+    int initial_screen = is_screen_on();
+    fprintf(stderr, "[pwrkey] Daemon active. Initial screen state: %s\n", initial_screen ? "ON" : "OFF");
 
-    fprintf(stderr, "[pwrkey] Daemon active. Initial screen state: %s\n", is_screen_on() ? "ON" : "OFF");
+    // Align initial CPU cores with screen state
+    if (initial_screen) {
+        set_big_cores_online(1);
+    } else {
+        set_big_cores_online(0);
+    }
+
+    int loop_counter = 0;
 
     while (running) {
-        int ret = poll(pfds, nr_fds, 500);
+        int ret = poll(pfds, nr_fds, 500); // Poll every 500ms
+        loop_counter++;
+
+        // Periodic state verification every 1 second (2 * 500ms)
+        if (loop_counter >= 2) {
+            loop_counter = 0;
+            int screen_on_now = is_screen_on();
+
+            if (screen_on_now) {
+                // If screen is ON, always ensure all 8 cores are online
+                set_big_cores_online(1);
+            } else {
+                // If screen is OFF (e.g. idle timeout blanking), manage big cores based on load
+                float load1 = get_load1();
+                if (load1 >= 3.5f) {
+                    // System under heavy background compilation/tasks: wake big cores
+                    set_big_cores_online(1);
+                } else if (load1 < 2.0f) {
+                    // Normal idle / light server tasks: keep big cores offlined
+                    set_big_cores_online(0);
+                }
+            }
+        }
+
         if (ret > 0) {
             for (int i = 0; i < nr_fds; i++) {
                 if (pfds[i].revents & POLLIN) {
                     struct input_event ev;
                     while (read(pfds[i].fd, &ev, sizeof(ev)) > 0) {
-                        // Trigger on key release (value == 0) for Volume Down or Power
                         if (ev.type == EV_KEY && ev.value == 0 &&
                             (ev.code == KEY_VOLUMEDOWN || ev.code == KEY_POWER)) {
 
@@ -201,7 +270,9 @@ int main(void) {
         }
     }
 
-    fprintf(stderr, "[pwrkey] Shutting down daemon...\n");
+    fprintf(stderr, "[pwrkey] Shutting down daemon. Restoring all cores online...\n");
+    set_big_cores_online(1);
+
     if (voldown_fd >= 0) {
         ioctl(voldown_fd, EVIOCGRAB, 0);
         close(voldown_fd);
